@@ -1,8 +1,8 @@
-
 import asyncio
 from contextlib import asynccontextmanager
  
 from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
  
 from database import get_db, engine, Base
@@ -23,23 +23,37 @@ async def lifespan(app: FastAPI):
     # schedule WebSocket broadcasts from on_message
     mqtt_client.set_main_loop(asyncio.get_event_loop())
  
-    # Start MQTT subscriber
-    mqtt_client_instance = start_mqtt()
- 
-    print("NEXUS MQTT subscriber started")
+    # Start MQTT subscriber. If the broker isn't reachable (no Mosquitto
+    # running, wrong IP, etc.), don't let that take down the whole API -
+    # /latest, /history, /readings, and /ws should still work off the
+    # database alone.
+    mqtt_client_instance = None
+    try:
+        mqtt_client_instance = start_mqtt()
+        print("NEXUS MQTT subscriber started")
+    except Exception as e:
+        print(f"MQTT broker unavailable, continuing without it: {e}")
  
     yield
  
     # Stop MQTT subscriber when FastAPI shuts down
-    mqtt_client_instance.loop_stop()
-    mqtt_client_instance.disconnect()
- 
-    print("NEXUS MQTT subscriber stopped")
+    if mqtt_client_instance:
+        mqtt_client_instance.loop_stop()
+        mqtt_client_instance.disconnect()
+        print("NEXUS MQTT subscriber stopped")
  
  
 app = FastAPI(
     title="NEXUS Backend",
     lifespan=lifespan
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
  
  
